@@ -59,10 +59,6 @@ class DoctorModel {
       totalPatients: 0,
       totalAppointments: 0,
       role: 'doctor',
-      googleAccessToken: data.googleAccessToken || null,
-      googleRefreshToken: data.googleRefreshToken || null,
-      googleCalendarId: data.googleCalendarId || null,
-      googleTokenExpiry: data.googleTokenExpiry || null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     };

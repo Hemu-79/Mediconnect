@@ -83,13 +83,13 @@ const checkAndUpdateAppointmentStatus = async (appointment) => {
     
     // Update status if it changed
     if (newStatus !== appointment.status) {
-      await Appointment.findByIdAndUpdate(appointment._id, { status: newStatus });
+      await Appointment.updateOne({ _id: appointment._id }, { $set: { status: newStatus } });
       appointment.status = newStatus;
     }
   }
   // If appointment date is in the past and not completed/cancelled, mark as completed
   else if (appointmentDate < today && !['completed', 'cancelled'].includes(appointment.status)) {
-    await Appointment.findByIdAndUpdate(appointment._id, { status: 'completed' });
+    await Appointment.updateOne({ _id: appointment._id }, { $set: { status: 'completed' } });
     appointment.status = 'completed';
   }
   
@@ -116,9 +116,10 @@ class AppointmentController {
         query.status = status;
       }
 
-      const appointments = await Appointment.find(query)
-        .populate("patientId", "firstName lastName profilePicture phoneNumber dateOfBirth gender bloodGroup address")
-        .sort({ appointmentDate: 1, startTime: 1 });
+      const appointments = await Appointment.find(query, {
+        populate: ['patientId'],
+        sort: { appointmentDate: 1, startTime: 1 }
+      });
 
       // Check and update status for each appointment
       const updatedAppointments = [];
@@ -145,12 +146,10 @@ class AppointmentController {
         query.status = status;
       }
 
-      const appointments = await Appointment.find(query)
-        .populate(
-          "doctorId",
-            "firstName lastName specializations profilePicture address"
-        )
-        .sort({ appointmentDate: 1, startTime: 1 });
+      const appointments = await Appointment.find(query, {
+        populate: ['doctorId'],
+        sort: { appointmentDate: 1, startTime: 1 }
+      });
 
       // Check and update status for each appointment
       const updatedAppointments = [];
@@ -217,10 +216,17 @@ class AppointmentController {
             doctorId,
             appointmentDate: {
               $gte: dayStart,
-              $lt: dayEnd,
+              $lte: dayEnd,
             },
-            status: { $in: ["pending", "ongoing"] },
-          });
+            status: "pending"
+          }).concat(await Appointment.find({
+            doctorId,
+            appointmentDate: {
+              $gte: dayStart,
+              $lte: dayEnd,
+            },
+            status: "ongoing"
+          }));
 
           // Filter out booked slots
           const availableSlotsForDay = slots.filter((slot) => {
@@ -260,13 +266,23 @@ class AppointmentController {
       } = req.body;
 
       // Check if the slot is still available
-      const existingAppointment = await Appointment.findOne({
+      const pendingAppointment = await Appointment.findOne({
         doctorId,
         appointmentDate: new Date(appointmentDate),
         startTime,
         endTime,
-        status: { $in: ["pending", "ongoing"] },
+        status: "pending"
       });
+      
+      const ongoingAppointment = await Appointment.findOne({
+        doctorId,
+        appointmentDate: new Date(appointmentDate),
+        startTime,
+        endTime,
+        status: "ongoing"
+      });
+      
+      const existingAppointment = pendingAppointment || ongoingAppointment;
 
       if (existingAppointment) {
         return res.status(400).json({
@@ -353,7 +369,7 @@ class AppointmentController {
 
       // Create new appointment with room URL
       console.log('Creating appointment with room URL:', roomUrl);
-      const appointment = new Appointment({
+      const appointment = await Appointment.create({
         doctorId,
         patientId,
         appointmentDate: new Date(appointmentDate),
@@ -366,20 +382,14 @@ class AppointmentController {
         roomUrl: roomUrl, // Ensure this is always set
       });
 
-      console.log('Appointment data before save:', {
-        roomUrl: appointment.roomUrl,
-        doctorId: appointment.doctorId,
-        patientId: appointment.patientId
-      });
+      console.log('Appointment created with room URL:', appointment.roomUrl);
 
-      await appointment.save();
-      console.log('Appointment saved with room URL:', appointment.roomUrl);
-
-      // Populate the appointment with doctor and patient details
-      await appointment.populate([
-        { path: "doctorId", select: "firstName lastName specializations" },
-        { path: "patientId", select: "firstName lastName phoneNumber" },
-      ]);
+      // Manually populate doctor and patient details
+      const Doctor = require('../models/doctor');
+      const Patient = require('../models/patient');
+      
+      appointment.doctorId = await Doctor.findById(doctorId);
+      appointment.patientId = await Patient.findById(patientId);
 
       // Trigger Google Calendar event creation (async)
       handleAppointmentCreated(appointment._id);
@@ -451,14 +461,14 @@ class AppointmentController {
       if (doctorNotes) updateData.doctorNotes = doctorNotes;
       if (prescription) updateData.prescription = prescription;
 
-      const appointment = await Appointment.findByIdAndUpdate(
-        appointmentId,
-        updateData,
-        { new: true }
-      ).populate([
-        { path: "doctorId", select: "firstName lastName specializations" },
-        { path: "patientId", select: "firstName lastName phoneNumber" },
-      ]);
+      await Appointment.updateOne({ _id: appointmentId }, { $set: updateData });
+      const appointment = await Appointment.findById(appointmentId);
+      
+      // Manually populate
+      const Doctor = require('../models/doctor');
+      const Patient = require('../models/patient');
+      appointment.doctorId = await Doctor.findById(appointment.doctorId);
+      appointment.patientId = await Patient.findById(appointment.patientId);
 
       handleAppointmentUpdated(appointment._id);
     
@@ -474,14 +484,15 @@ class AppointmentController {
       const { appointmentId } = req.params;
       const { reason } = req.body;
 
-      const appointment = await Appointment.findByIdAndUpdate(
-        appointmentId,
-        {
+      await Appointment.updateOne(
+        { _id: appointmentId },
+        { $set: {
           status: "cancelled",
           notes: reason || "Cancelled by user",
-        },
-        { new: true }
+        }}
       );
+      
+      const appointment = await Appointment.findById(appointmentId);
 
       if (!appointment) {
         return res.status(404).json({
@@ -505,15 +516,15 @@ class AppointmentController {
     try {
       const { appointmentId } = req.params;
 
-      const appointment = await Appointment.findById(appointmentId)
-        .populate(
-          "doctorId",
-          "firstName lastName specializations profilePicture phoneNumber"
-        )
-        .populate(
-          "patientId",
-          "firstName lastName profilePicture phoneNumber dateOfBirth gender"
-        );
+      const appointment = await Appointment.findById(appointmentId);
+      
+      if (appointment) {
+        // Manually populate
+        const Doctor = require('../models/doctor');
+        const Patient = require('../models/patient');
+        appointment.doctorId = await Doctor.findById(appointment.doctorId);
+        appointment.patientId = await Patient.findById(appointment.patientId);
+      }
 
       if (!appointment) {
         return res.status(404).json({
@@ -577,11 +588,19 @@ class AppointmentController {
             if (daySchedule && daySchedule.isAvailable) {
               // Check if there are available slots
               const slots = availability.generateSlotsForDay(requestedDate);
-              const existingAppointments = await Appointment.find({
+              const pendingApts = await Appointment.find({
                 doctorId: doctor._id,
                 appointmentDate: requestedDate,
-                status: { $in: ["pending", "ongoing"] },
+                status: "pending",
               });
+              
+              const ongoingApts = await Appointment.find({
+                doctorId: doctor._id,
+                appointmentDate: requestedDate,
+                status: "ongoing",
+              });
+              
+              const existingAppointments = [...pendingApts, ...ongoingApts];
 
               const availableSlots = slots.filter((slot) => {
                 return !existingAppointments.some(

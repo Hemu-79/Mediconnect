@@ -238,14 +238,25 @@ class DoctorAvailabilityController {
 
       // Get existing appointments for this date
       const Appointment = require("../models/appointment");
-      const existingAppointments = await Appointment.find({
-        doctorId,
+            const pendingApts = await Appointment.find({
+        doctorId: availability.doctorId,
         appointmentDate: {
-          $gte: new Date(requestedDate.setHours(0, 0, 0, 0)),
-          $lt: new Date(requestedDate.setHours(23, 59, 59, 999)),
+          $gte: dayStart,
+          $lte: dayEnd,
         },
-        status: { $in: ["confirmed", "pending"] },
+        status: "pending"
       });
+      
+      const ongoingApts = await Appointment.find({
+        doctorId: availability.doctorId,
+        appointmentDate: {
+          $gte: dayStart,
+          $lte: dayEnd,
+        },
+        status: "ongoing"
+      });
+      
+      const existingAppointments = [...pendingApts, ...ongoingApts];
 
       // Filter out booked slots
       const availableSlots = futureSlots.filter((slot) => {

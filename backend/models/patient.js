@@ -52,10 +52,6 @@ class PatientModel {
       dietType: data.dietType || 'vegetarian',
       profileCompleted: false,
       role: 'patient',
-      googleAccessToken: data.googleAccessToken || null,
-      googleRefreshToken: data.googleRefreshToken || null,
-      googleCalendarId: data.googleCalendarId || null,
-      googleTokenExpiry: data.googleTokenExpiry || null,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     };
